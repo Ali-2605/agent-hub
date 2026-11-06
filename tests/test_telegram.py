@@ -89,3 +89,32 @@ def test_away_toggle_and_mode(bot):
         await bot._handle(msg("/back"))
         assert not hub.away
     run(go())
+
+
+def test_message_session_button(bot, tmp_path):
+    hub = bot.hub
+    hub.db.insert(
+        "sessions", {"id": "abc123-claude", "agent": "claude", "cwd": str(tmp_path), "status": "active"})
+    spawned = []
+
+    async def fake_spawn(job_id, extra_env=None):
+        spawned.append(hub.db.get("jobs", job_id))
+
+    hub._spawn = fake_spawn
+
+    async def go():
+        await bot._handle({"update_id": 3, "callback_query": {"id": "x", "data": "msg:abc123",
+                                                               "message": {"chat": {"id": CHAT}}}})
+        req = hub.pending_requests()[0]
+        assert req["session_id"] == "abc123-claude" and req["allow_text"]
+        await bot._handle(msg("write the report", reply_to=req["tg_message_id"]))
+        await asyncio.sleep(0.05)
+        await bot._handle(msg("/msg abc123 and another one"))
+    run(go())
+    assert len(spawned) == 2
+    argv = spawned[0]["command"]
+    assert argv[:3] == ["claude", "-p", "write the report"]
+    assert argv[-3:] == ["--resume", "abc123-claude", "--fork-session"]
+    assert spawned[0]["cwd"] == str(tmp_path)
+    assert spawned[1]["command"][2] == "and another one"
+    assert any("Sent. Running as job" in t for t in texts(bot))

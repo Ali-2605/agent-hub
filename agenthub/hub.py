@@ -591,6 +591,10 @@ class Hub:
         if agent == "claude":
             mode = mode or self.cfg.phone_claude_mode
             argv = ["claude", "-p", prompt, "--permission-mode", mode]
+            if session_id:
+                # Continue that conversation with all its context. --fork-session gives the
+                # run its own id, so a terminal that still has the session open isn't disturbed.
+                argv += ["--resume", session_id, "--fork-session"]
         elif agent == "opencode":
             # --standalone: a private server that sees our env (AGENT_HUB_ROUTE), unlike the
             # background service. Our own session id lets you continue the conversation later.
@@ -605,6 +609,43 @@ class Hub:
         self.db.update("jobs", job["id"], meta={"timeout": 0, "agent_session": session_id, "mode": mode})
         await self._spawn(job["id"], extra_env={"AGENT_HUB_ROUTE": "phone"})
         return self.db.get("jobs", job["id"])
+
+    async def message_session(self, session: str, prompt: str) -> dict:
+        """Send a new prompt to an existing session from the phone (the 💬 button).
+        Runs in the background in the session's folder; the reply comes to the phone."""
+        s = self.db.find("sessions", session)
+        if not s:
+            raise ValueError(f"no session '{session}'")
+        if not s.get("cwd") or not Path(s["cwd"]).is_dir():
+            raise ValueError("that session's folder no longer exists")
+        mode = None if s["agent"] == "claude" else (s.get("agent_mode") if s.get("agent_mode") in ("plan", "build") else None)
+        self.db.log_event("message", f"{s['id']}: {prompt[:200]}")
+        return await self.run_agent(s["agent"], s["cwd"], prompt, mode, s["id"])
+
+    async def ask_session_prompt(self, session: str) -> dict:
+        """Ask on the phone for a prompt to send to this session (reply to the message)."""
+        s = self.db.find("sessions", session)
+        if not s:
+            raise ValueError(f"no session '{session}'")
+        req = await self.create_request(
+            kind="reply", title="💬 Message this session — reply with your prompt",
+            body="It continues this conversation in the background, in the session's folder. "
+                 "Questions, permissions and the answer come here.",
+            options=["Cancel"], allow_text=True, source=s["agent"], session_id=s["id"],
+            header=self._session_header(s))
+
+        async def on_answer(r: dict) -> None:
+            text = (r.get("answer") or "").strip()
+            if r["status"] != "answered" or not text or text == "Cancel":
+                return
+            try:
+                job = await self.message_session(s["id"], text)
+                await self.notifier.send(f"▶️ Sent. Running as job <code>{job['id']}</code> — /log {job['id']}")
+            except ValueError as e:
+                await self.notifier.send(f"⚠️ {esc(str(e))}")
+
+        self._on_answer[req["id"]] = on_answer
+        return req
 
     async def _offer_continue(self, job: dict) -> None:
         """opencode runs exit when done, so 'reply to continue' starts a new run in the same session."""

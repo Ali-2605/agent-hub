@@ -89,6 +89,7 @@ Send `/help` to your bot. Done.
 | `/jobs` · `/log id` · `/stop id` | Recent runs, their output, kill one |
 | `/sessions` | Claude Code and opencode sessions. Tap one to see its last message and change its mode |
 | `/mode id mode` | Change a session's mode (see below) |
+| 💬 in `/sessions` · `/msg id prompt` | Send a new prompt to an existing session, even one that's idle in your laptop terminal (see below) |
 | `/route id auto\|phone\|local` | Per session: phone only while away (default), always phone, or never phone |
 | `/claude project prompt` | Start Claude Code in a project (add `project:plan` to pick the mode) |
 | `/opencode project prompt` | Start opencode in a project (add `project:plan` to pick the agent) |
@@ -99,6 +100,16 @@ Send `/help` to your bot. Done.
 
 - Typing on a **permission** prompt counts as a *deny*, and the agent receives your text as the reason ("no, use the staging DB instead").
 - Typing on a **"finished"** message sends your text to the agent as its next prompt, so it keeps going. Tap ✅ **Done** to let it stop.
+
+### Messaging a session that's already open
+
+In `/sessions`, tap a session, then **💬 Message this session** and reply with your prompt (or type `/msg <id> <prompt>`). The hub continues that conversation in the background, in the session's folder, with all its earlier context:
+
+- **Claude Code:** `claude -p <prompt> --resume <id> --fork-session`. The fork gets its own id, so the window still open on the laptop isn't disturbed. To pick the conversation up at the laptop later, run `claude --resume` and choose the forked session.
+- **opencode:** `opencode run -s <id>` continues the same session.
+- Permission prompts and questions come to the phone. When it finishes, you get the answer with "reply to continue".
+- The answer arrives on the phone, not in the open terminal window.
+- Agent text goes through Telegram. For sensitive data, ask the agent to save results to a file and just send you the path.
 
 ### Agent modes
 

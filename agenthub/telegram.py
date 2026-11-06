@@ -42,6 +42,7 @@ HELP = """<b>agent-hub</b> — commands
 /sessions — Claude Code / opencode sessions with their mode
 /mode id mode — change mode (default, acceptEdits, plan, auto, bypassPermissions, pause, clear)
 /route id auto|phone|local — where this session asks questions
+/msg id prompt — send a new prompt to a session (or tap 💬 in /sessions)
 /claude project prompt — start Claude Code in a project
 /opencode project prompt — start opencode in a project
 /projects — known project folders
@@ -220,6 +221,8 @@ class TelegramBot:
         elif kind == "m":  # m:<session prefix>:<mode>
             sid, _, mode = rest.partition(":")
             await self.cmd_mode(f"{sid} {mode}")
+        elif kind == "msg":  # ask for a prompt to send to this session
+            await self.cmd_msg(rest)
         elif kind == "s":  # show one session's mode picker
             await self._session_card(rest)
         elif kind == "away":
@@ -390,7 +393,8 @@ class TelegramBot:
         short = s["id"][:12]
         rows = [[(f"{policy.MODE_EMOJI[m]} {m}", f"m:{short}:{m}") for m in ("default", "acceptEdits", "plan")],
                 [(f"{policy.MODE_EMOJI[m]} {m}", f"m:{short}:{m}") for m in ("auto", "bypassPermissions", "pause")],
-                [("↩️ clear (agent decides)", f"m:{short}:clear")]]
+                [("↩️ clear (agent decides)", f"m:{short}:clear")],
+                [("💬 Message this session", f"msg:{short}")]]
         await self.send(text, rows)
 
     async def cmd_mode(self, args: str) -> None:
@@ -456,6 +460,20 @@ class TelegramBot:
         await self._agent("opencode", args)
 
     # ---- find
+    async def cmd_msg(self, args: str) -> None:
+        sid, _, text = args.partition(" ")
+        if not sid:
+            await self.send("Usage: /msg session-id [prompt] — or tap 💬 under a session in /sessions")
+            return
+        try:
+            if text.strip():
+                job = await self.hub.message_session(sid, text.strip())
+                await self.send(f"▶️ Sent. Running as job <code>{job['id']}</code> — /log {job['id']}")
+            else:
+                await self.hub.ask_session_prompt(sid)
+        except ValueError as e:
+            await self.send(f"⚠️ {esc(e)}")
+
     async def cmd_off(self, args: str) -> None:
         if not await self.hub.turn_off("the phone"):
             await self.send("This hub can't be turned off from here (not started with <code>ahub on</code>).")
