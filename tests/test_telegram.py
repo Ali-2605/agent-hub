@@ -118,3 +118,21 @@ def test_message_session_button(bot, tmp_path):
     assert spawned[0]["cwd"] == str(tmp_path)
     assert spawned[1]["command"][2] == "and another one"
     assert any("Sent. Running as job" in t for t in texts(bot))
+
+
+def test_back_releases_waiting_stop(bot):
+    hub = bot.hub
+    hub.db.insert("sessions", {"id": "lap-1", "agent": "claude", "cwd": "/", "routing": "auto"})
+    hub.db.insert("sessions", {"id": "job-1", "agent": "claude", "cwd": "/", "routing": "phone"})
+
+    async def go():
+        await bot.cmd_away("")
+        t1 = asyncio.create_task(hub._stop_conversation(hub.db.get("sessions", "lap-1"), "done", "claude"))
+        t2 = asyncio.create_task(hub._stop_conversation(hub.db.get("sessions", "job-1"), "done", "claude"))
+        await asyncio.sleep(0.05)
+        await bot.cmd_back("")
+        assert await asyncio.wait_for(t1, 2) is None        # laptop session let go
+        await asyncio.sleep(0.05)
+        assert not t2.done()                                  # phone-routed run keeps waiting
+        t2.cancel()
+    run(go())

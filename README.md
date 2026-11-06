@@ -100,6 +100,7 @@ Send `/help` to your bot. Done.
 
 - Typing on a **permission** prompt counts as a *deny*, and the agent receives your text as the reason ("no, use the staging DB instead").
 - Typing on a **"finished"** message sends your text to the agent as its next prompt, so it keeps going. Tap ✅ **Done** to let it stop.
+- If you **don't reply**, the agent waits `stop_wait_minutes` (default 30), then stops normally and the session goes idle. Sending `/back` lets waiting laptop sessions go right away. You can still reach an idle session later with 💬 in `/sessions`.
 
 ### Messaging a session that's already open
 

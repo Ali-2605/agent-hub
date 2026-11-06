@@ -146,6 +146,22 @@ class Hub:
     def set_away(self, away: bool) -> None:
         self.db.set_setting("away", away)
         self.db.log_event("away", "away" if away else "back")
+        if not away:
+            try:
+                asyncio.get_running_loop().create_task(self._release_on_back())
+            except RuntimeError:  # no event loop (called outside the hub)
+                pass
+
+    async def _release_on_back(self) -> None:
+        """You're back: agents that finished while you were away and are waiting for a phone
+        reply are let go, so the terminal is free again. Sessions routed to the phone on
+        purpose (`/route id phone`, runs started from the phone) keep waiting."""
+        for req in self.pending_requests():
+            if req["kind"] != "reply" or not req.get("session_id"):
+                continue
+            s = self.db.get("sessions", req["session_id"])
+            if s and s.get("routing") == "auto":
+                await self.answer_request(req["id"], "(you came back to the computer)", status="expired")
 
     # ================================================================ notify
     async def notify(self, text: str, title: str | None = None, job_id: str | None = None) -> None:
