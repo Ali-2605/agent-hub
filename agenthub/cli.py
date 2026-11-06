@@ -183,6 +183,14 @@ def cmd_notify(a):
     client().call("POST", "/api/notify", {"text": a.text, "title": a.title, "job_id": os.environ.get("AGENT_HUB_JOB_ID")})
 
 
+def cmd_send(a):
+    for f in a.files:
+        r = client().call("POST", "/api/files", {"path": os.path.abspath(os.path.expanduser(f)),
+                                                 "caption": a.caption or "",
+                                                 "job_id": os.environ.get("AGENT_HUB_JOB_ID")}, timeout=310)
+        print(f"sent {r['path']}")
+
+
 def cmd_ask(a):
     answer = client().ask(a.question, options=a.option or None, timeout_s=a.timeout or None, default=a.default)
     if answer is None:
@@ -533,6 +541,11 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("text")
     s.add_argument("--title")
     s.set_defaults(fn=cmd_notify)
+
+    s = sub.add_parser("send", help="send file(s) to the phone (up to 50 MB each)")
+    s.add_argument("files", nargs="+")
+    s.add_argument("-c", "--caption")
+    s.set_defaults(fn=cmd_send)
 
     s = sub.add_parser("ask", help="ask on the phone, print the answer (exit 2 if unanswered)")
     s.add_argument("question")

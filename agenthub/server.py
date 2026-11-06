@@ -20,6 +20,12 @@ from .hub import Hub
 log = logging.getLogger("agenthub")
 
 
+class FileIn(BaseModel):
+    path: str
+    caption: str = ""
+    job_id: str | None = None
+
+
 class NotifyIn(BaseModel):
     text: str
     title: str | None = None
@@ -121,6 +127,14 @@ def create_app(hub: Hub | None = None, with_telegram: bool = True) -> FastAPI:
     async def away(body: AwayIn):
         H().set_away(body.away)
         return {"away": body.away}
+
+    @app.post("/api/files", dependencies=A)
+    async def send_file(body: FileIn):
+        try:
+            p = await H().send_file(body.path, body.caption, body.job_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "path": str(p)}
 
     @app.post("/api/notify", dependencies=A)
     async def notify(body: NotifyIn):

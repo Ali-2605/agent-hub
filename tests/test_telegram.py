@@ -136,3 +136,21 @@ def test_back_releases_waiting_stop(bot):
         assert not t2.done()                                  # phone-routed run keeps waiting
         t2.cancel()
     run(go())
+
+
+def test_get_file_only_inside_projects(bot, tmp_path):
+    sent = []
+
+    async def fake_send_file(path, caption=""):
+        sent.append(Path(path))
+        return 1
+
+    bot.send_file = fake_send_file
+
+    async def go():
+        await bot._handle(msg("/get examples scripts/disk_usage.py"))
+        await bot._handle(msg("/get /etc/hostname"))
+        await bot._handle(msg("/get examples ../README.md"))
+    run(go())
+    assert sent == [(EXAMPLES / "scripts" / "disk_usage.py").resolve()]
+    assert sum("only send files inside" in t for t in texts(bot)) == 2

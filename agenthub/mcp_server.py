@@ -17,7 +17,7 @@ from .client import HubUnavailable, call, wait_for
 INSTRUCTIONS = """agent-hub runs the user's scripts ("tasks") on their computer and connects
 to their phone (Telegram). Use list_tasks to discover scripts (each has a description,
 arguments and examples), run_task to run one, and job_log to read its output.
-Use notify_user for important updates while the user is away, and ask_user when you
+Use notify_user for important updates while the user is away, send_file for documents they asked for, and ask_user when you
 need a decision and the user may not be at the computer (it waits for their answer)."""
 
 mcp = MCPServer("agent-hub", instructions=INSTRUCTIONS)
@@ -97,6 +97,17 @@ def notify_user(text: str) -> str:
     """Send a short message to the user's phone. Use for important milestones or problems."""
     call("POST", "/api/notify", {"text": text, "title": os.path.basename(os.getcwd())})
     return "sent"
+
+
+@mcp.tool()
+@_safe
+def send_file(path: str, caption: str = "") -> str:
+    """Send a file from this computer to the user's phone (Telegram document, up to 50 MB).
+    Use for documents, reports, charts or exports the user asked for. path may be relative
+    to the current folder. Secrets (.env, keys, ~/.ssh) are refused."""
+    full = os.path.abspath(os.path.expanduser(path))
+    call("POST", "/api/files", {"path": full, "caption": caption}, timeout=310)
+    return f"sent {full}"
 
 
 @mcp.tool()

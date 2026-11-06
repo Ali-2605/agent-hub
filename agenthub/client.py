@@ -1,6 +1,6 @@
 """Tiny stdlib-only client for the hub. Use it from ANY Python script:
 
-    from agenthub.client import notify, ask, progress
+    from agenthub.client import notify, ask, progress, send_file
 
     notify("Backup started")
     if ask("Delete 1,204 old files?", options=["Yes", "No"]) == "Yes":
@@ -12,6 +12,7 @@ raises HubUnavailable (so a script never hangs or crashes by surprise).
 
 Not using Python? The same things exist as shell commands:
     ahub notify "text"      ahub ask "question" -o Yes -o No      ahub progress 40 "msg"
+    ahub send report.pdf -c "caption"
 """
 from __future__ import annotations
 
@@ -76,6 +77,17 @@ def notify(text: str, title: str | None = None) -> None:
         call("POST", "/api/notify", {"text": text, "title": title, "job_id": os.environ.get("AGENT_HUB_JOB_ID")})
     except HubUnavailable:
         pass
+
+
+def send_file(path: str, caption: str = "") -> bool:
+    """Send a file (report, chart, CSV…) to the phone. Up to 50 MB. Returns False if the
+    hub is off. Raises RuntimeError if the hub refuses it (missing, too big, secret)."""
+    try:
+        call("POST", "/api/files", {"path": os.path.abspath(os.path.expanduser(path)), "caption": caption,
+                                    "job_id": os.environ.get("AGENT_HUB_JOB_ID")}, timeout=310)
+        return True
+    except HubUnavailable:
+        return False
 
 
 def progress(percent: float | None, text: str = "") -> None:

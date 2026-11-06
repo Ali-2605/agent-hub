@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shlex
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
@@ -49,6 +50,7 @@ HELP = """<b>agent-hub</b> — commands
 
 <b>Find</b>
 /find text — search tasks, logs, agent messages, history
+/get project path — send me a file from a project folder
 /reload — reload task files
 
 <b>Power</b>
@@ -84,6 +86,21 @@ class TelegramBot:
         await self._call("editMessageText", payload)
 
     # ------------------------------------------------------------ plumbing
+    async def send_file(self, path, caption: str = "") -> int | None:
+        try:
+            data = await asyncio.to_thread(Path(path).read_bytes)
+            r = await self.http.post(f"{self.api}/sendDocument",
+                                     data={"chat_id": str(self.chat_id), "caption": caption},
+                                     files={"document": (Path(path).name, data)}, timeout=300)
+            res = r.json()
+        except Exception as e:  # noqa: BLE001
+            log.warning("telegram sendDocument failed: %s", e)
+            return None
+        if not res.get("ok"):
+            log.warning("telegram sendDocument error: %s", res.get("description"))
+            return None
+        return res["result"]["message_id"]
+
     @staticmethod
     def _fit(text: str) -> str:
         if len(text) <= MAX_LEN:
@@ -460,6 +477,13 @@ class TelegramBot:
         await self._agent("opencode", args)
 
     # ---- find
+    async def cmd_get(self, args: str) -> None:
+        try:
+            p = self.hub.find_file(args)
+            await self.hub.send_file(p, str(p))
+        except ValueError as e:
+            await self.send(f"⚠️ {esc(e)}")
+
     async def cmd_msg(self, args: str) -> None:
         sid, _, text = args.partition(" ")
         if not sid:

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
 
 from . import policy
-from .config import Config
+from .config import Config, hub_home
 from .db import DB, new_id
 from .tasks import Task, load_tasks, parse_schedule, resolve
 
@@ -34,6 +34,36 @@ Buttons = list[list[tuple[str, str]]]  # rows of (label, callback_data)
 class Notifier(Protocol):
     async def send(self, text: str, buttons: Buttons | None = None) -> int | None: ...
     async def edit(self, message_id: int, text: str, buttons: Buttons | None = None) -> None: ...
+    async def send_file(self, path: Path, caption: str = "") -> int | None: ...
+
+
+MAX_FILE_BYTES = 50 * 1024 * 1024  # Telegram bots can send documents up to 50 MB
+
+# Never sent to the phone, whoever asks: the hub's own secrets and common key folders.
+BLOCKED_DIRS = [".ssh", ".gnupg", ".aws", ".config/agent-hub"]
+
+
+def check_sendable(path: str | Path) -> Path:
+    """Resolve and validate a file before it goes to Telegram. Raises ValueError."""
+    p = Path(os.path.expanduser(str(path)))
+    if not p.is_absolute():
+        raise ValueError(f"use an absolute path (got {path})")
+    p = p.resolve()
+    if not p.is_file():
+        raise ValueError(f"not a file: {p}")
+    home = Path.home().resolve()
+    for d in BLOCKED_DIRS + [str(hub_home())]:
+        root = (home / d).resolve() if not os.path.isabs(d) else Path(d).resolve()
+        if p == root or root in p.parents:
+            raise ValueError(f"refusing to send files from {root} (secrets)")
+    if p.name == ".env" or p.name.startswith(".env.") or p.suffix in (".pem", ".key"):
+        raise ValueError(f"refusing to send {p.name} (looks like a secret)")
+    size = p.stat().st_size
+    if size > MAX_FILE_BYTES:
+        raise ValueError(f"{p.name} is {size // (1024 * 1024)} MB; Telegram's limit for bots is 50 MB")
+    if size == 0:
+        raise ValueError(f"{p.name} is empty")
+    return p
 
 
 class ConsoleNotifier:
@@ -49,6 +79,11 @@ class ConsoleNotifier:
 
     async def edit(self, message_id: int, text: str, buttons: Buttons | None = None) -> None:
         log.info("EDIT %s: %s", message_id, text.replace("\n", " | ")[:300])
+
+    async def send_file(self, path: Path, caption: str = "") -> int | None:
+        self.sent.append((f"FILE {path} {caption}", None))
+        log.info("FILE: %s %s", path, caption)
+        return len(self.sent)
 
 
 def esc(s: Any) -> str:
@@ -170,6 +205,35 @@ class Hub:
             msg = f"[job <code>{esc(job_id)}</code>] " + msg
         self.db.log_event("notify", f"{title or ''} {text}", job_id or "")
         await self.notifier.send(msg)
+
+    async def send_file(self, path: str | Path, caption: str = "", job_id: str | None = None) -> Path:
+        """Send a file from this computer to the phone as a document. Raises ValueError."""
+        p = check_sendable(path)
+        if job_id:
+            caption = f"[job {job_id}] {caption}".strip()
+        self.db.log_event("file", f"{p} {caption}", job_id or "")
+        if await self.notifier.send_file(p, caption[:1000]) is None:
+            raise ValueError("Telegram did not accept the file (see the hub log)")
+        return p
+
+    def find_file(self, args: str) -> Path:
+        """`/get` from the phone: 'project relative/path' or an absolute path. Only files
+        inside a registered project or a known agent session folder."""
+        name, _, rest = args.strip().partition(" ")
+        if not name:
+            raise ValueError("Usage: /get project path/in/project  —  or  /get /absolute/path")
+        if name in self.cfg.projects:
+            p = (Path(self.cfg.projects[name]) / rest.strip()).resolve()
+        else:
+            p = Path(os.path.expanduser(args.strip())).resolve()
+        roots = [Path(r).resolve() for r in self.cfg.projects.values()]
+        roots += [Path(r["cwd"]).resolve() for r in self.db.query(
+            "SELECT DISTINCT cwd FROM sessions WHERE cwd IS NOT NULL AND cwd != ''")]
+        home = Path.home().resolve()
+        if not any((p == r or r in p.parents) and r != home and r != Path("/") for r in roots):
+            raise ValueError("I only send files inside your project folders (/projects) "
+                             "or folders where an agent session ran")
+        return p
 
     # ================================================================ requests
     # A "request" is anything that waits for you: a question, a permission

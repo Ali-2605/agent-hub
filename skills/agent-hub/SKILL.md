@@ -17,6 +17,7 @@ Prefer the MCP tools (server `agent-hub`). Use the CLI if MCP isn't available.
 | Run one and get its output | `run_task(task, args, wait=true)` | `ahub run <task> key=value --wait` |
 | Check a job | `job_log(job_id)` / `list_jobs` | `ahub log <id>` / `ahub jobs` |
 | Tell the user something | `notify_user(text)` | `ahub notify "text"` |
+| Send a file (document, report, chart) | `send_file(path, caption)` | `ahub send <file> -c "caption"` |
 | Ask the user and wait | `ask_user(question, options)` | `ahub ask "question" -o A -o B` |
 | Is the user away? | `hub_status` (`user_away`) | `ahub status` |
 
@@ -26,6 +27,7 @@ Prefer the MCP tools (server `agent-hub`). Use the CLI if MCP isn't available.
 - Pass arguments exactly as the task describes them (strings, `key=value`). Don't invent arguments.
 - Tasks marked "asks the user" wait for approval on the phone. That's expected, so don't retry them.
 - `notify_user` is for things the user would want on their phone: a long job finished, you're blocked, something failed. Don't send chatty progress updates.
+- When the user asks for a document/report/export while away, save it to a file in the project and send it with `send_file`. Don't paste long content into messages. Secrets (.env, keys) are refused.
 - Use `ask_user` with short options (2–4 buttons) when the decision has clear choices. The user is often outside and on their phone.
 - Permission prompts and your normal questions already reach the phone automatically when the user is away. You don't need `ask_user` for those.
 

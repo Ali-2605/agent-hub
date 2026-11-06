@@ -94,6 +94,7 @@ Send `/help` to your bot. Done.
 | `/claude project prompt` | Start Claude Code in a project (add `project:plan` to pick the mode) |
 | `/opencode project prompt` | Start opencode in a project (add `project:plan` to pick the agent) |
 | `/find text` | Plain-text search across tasks, job logs, agent messages and history |
+| `/get project path` | Send you a file from a project folder (or a folder where an agent session ran), e.g. `/get myapp docs/report.pdf` |
 | `/reload` | Reload task files after editing them |
 
 **Answering:** tap a button, or *reply* to the message (swipe it right in Telegram) with text. If only one question is waiting, you can just type the answer.
@@ -168,13 +169,14 @@ The script's output is saved, and you get a message with the last lines when it 
 ### Level 2: talk to the phone from inside a Python script
 
 ```python
-from agenthub.client import notify, ask, confirm, progress
+from agenthub.client import notify, ask, confirm, progress, send_file
 
 progress(30, "copied 300/1000")                           # shows in /jobs, no buzz
 if not confirm("Found 12 GB of duplicates. Delete them?"):   # buttons Yes / No
     raise SystemExit
 name = ask("What should the archive be called?")          # free-text reply
 notify("Backup finished ✅")
+send_file("out/report.pdf", "Weekly report")              # arrives as a document
 ```
 
 Scripts started by the hub can always import this, even with a system `python3`. Elsewhere, install the repo (`pip install -e`) in that environment. `agenthub/client.py` uses only the standard library. If the hub is down, `notify` and `progress` do nothing, and `ask` raises `HubUnavailable`.
@@ -185,6 +187,7 @@ Scripts started by the hub can always import this, even with a system `python3`.
 ahub notify "deploy done" --title myapp
 answer=$(ahub ask "Deploy to prod?" -o Yes -o No) && [ "$answer" = Yes ] && ./deploy.sh
 ahub progress 50 "halfway"
+ahub send out/report.pdf -c "Weekly report"   # one or more files, 50 MB each
 ahub run backup src=/mnt/e --wait     # run a task and print its output
 ```
 
@@ -194,7 +197,7 @@ ahub run backup src=/mnt/e --wait     # run a task and print its output
 
 The task manifest is the single source of truth. Agents get it in three ways, and all of them are generated automatically:
 
-1. **MCP server** (`ahub install claude` / `opencode` registers it). Tools: `list_tasks`, `run_task`, `job_log`, `list_jobs`, `notify_user`, `ask_user`, `hub_status`. Any MCP client (Cursor, etc.) can use it with `command: ahub mcp`.
+1. **MCP server** (`ahub install claude` / `opencode` registers it). Tools: `list_tasks`, `run_task`, `job_log`, `list_jobs`, `notify_user`, `send_file`, `ask_user`, `hub_status`. Any MCP client (Cursor, etc.) can use it with `command: ahub mcp`.
 2. **Skill** (`ahub install skill`). Claude Code and opencode learn *when* to use the hub, for example asking you on the phone when you're away.
 3. **`TASKS.md`** (`ahub docs` writes `<project>/.hub/TASKS.md`). A readable catalog for agents without MCP. Point to it from the project's `AGENTS.md` / `CLAUDE.md`:
 
@@ -237,6 +240,7 @@ See [config.example.yaml](config.example.yaml) for all settings (timeouts, what 
 - Scripts run without a shell, and arguments are passed as single values, so `/run x path="; rm -rf /"` can't inject commands.
 - There is **no "run any shell command" feature from the phone**. Only tasks you wrote can run. That's deliberate.
 - Anyone holding your unlocked phone with Telegram open can control your agents. Lock your phone. Access belongs to your **Telegram account**, so it also works from Telegram Desktop/Web: turn on Two-Step Verification in Telegram.
+- **Sending files** (`ahub send`, `send_file`, `/get`) refuses the hub's own folder, `~/.ssh`, `~/.gnupg`, `~/.aws`, `.env*`, `*.pem` and `*.key`, and anything over Telegram's 50 MB bot limit. `/get` from the phone only reaches files inside registered projects or folders where an agent session ran, never your whole disk. Files pass through Telegram's servers, so think twice about sensitive data.
 - **The hub only starts with your password, on the laptop** (`ahub on`). Only a salted PBKDF2 hash is stored (`~/.config/agent-hub/password`). The phone can turn it off (`/off`) but not on. The password stops accidental or automatic starts; it can't stop someone who already controls your laptop account.
 
 ---

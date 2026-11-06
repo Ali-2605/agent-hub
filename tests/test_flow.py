@@ -175,3 +175,19 @@ def test_confirm_task_waits_for_approval(hub):
 def test_find(hub):
     res = call("GET", "/api/find?q=disk")["results"]
     assert any("disk-usage" in r for r in res)
+
+
+def test_send_file(hub, tmp_path):
+    report = tmp_path / "report.md"
+    report.write_text("# Heart rate\n72 bpm\n")
+    r = subprocess.run([AHUB, "send", "report.md", "-c", "the report"], cwd=tmp_path,
+                       capture_output=True, text=True, env=os.environ.copy())
+    assert r.returncode == 0, r.stderr
+    assert any(t.startswith(f"FILE {report}") and "the report" in t for t, _ in hub.notifier.sent)
+    from agenthub.client import send_file
+    assert send_file(str(report))
+    # refused: missing, secrets, the hub's own folder
+    (tmp_path / ".env").write_text("TOKEN=x")
+    for bad in [str(tmp_path / "nope.txt"), str(tmp_path / ".env"), os.environ["AGENT_HUB_HOME"] + "/token"]:
+        with pytest.raises(RuntimeError, match="400"):
+            call("POST", "/api/files", {"path": bad})
