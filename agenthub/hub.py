@@ -13,6 +13,7 @@ import asyncio
 import datetime as dt
 import html
 import logging
+import json
 import os
 import signal
 import time
@@ -77,6 +78,18 @@ def tail(path: str | Path, lines: int) -> str:
         return "\n".join(deque(data.splitlines(), maxlen=lines))
     except FileNotFoundError:
         return ""
+
+
+def opencode_model(configured: str = "") -> str | None:
+    """Model for phone-started opencode runs: `opencode_model` from config.yaml, else the
+    model you last picked in opencode's TUI (it remembers it; `opencode run` doesn't)."""
+    if configured:
+        return configured
+    try:
+        recent = json.loads((Path.home() / ".local/state/opencode/model.json").read_text())["recent"][0]
+        return f"{recent['providerID']}/{recent['modelID']}"
+    except (OSError, ValueError, KeyError, IndexError, TypeError):
+        return None
 
 
 class Hub:
@@ -582,7 +595,10 @@ class Hub:
             # --standalone: a private server that sees our env (AGENT_HUB_ROUTE), unlike the
             # background service. Our own session id lets you continue the conversation later.
             session_id = session_id or "ses_hub" + os.urandom(10).hex()
-            argv = ["opencode", "run", "--standalone", "-s", session_id] + (["--agent", mode] if mode else []) + [prompt]
+            argv = ["opencode", "run", "--standalone", "-s", session_id] + (["--agent", mode] if mode else [])
+            if model := opencode_model(self.cfg.opencode_model):
+                argv += ["--model", model]
+            argv.append(prompt)
         else:
             raise ValueError("agent must be claude or opencode")
         job = self._new_job(f"{agent}:{prompt[:40]}", project, agent, argv, root, "starting", "always", 0)

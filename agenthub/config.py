@@ -68,6 +68,7 @@ class Config:
     # Default Claude permission mode for agent runs started from the phone.
     phone_claude_mode: str = "default"
     log_tail_lines: int = 40
+    opencode_model: str = ""
 
     @property
     def db_path(self) -> Path:
@@ -104,6 +105,7 @@ def load_config() -> Config:
         on_timeout=str(raw.get("on_timeout", "deny")),
         phone_claude_mode=str(raw.get("phone_claude_mode", "default")),
         log_tail_lines=int(raw.get("log_tail_lines", 40)),
+        opencode_model=str(raw.get("opencode_model") or ""),
     )
     cfg.logs_dir.mkdir(parents=True, exist_ok=True)
     return cfg

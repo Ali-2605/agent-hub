@@ -19,4 +19,8 @@ phone_claude_mode: default
 # Lines shown by /log
 log_tail_lines: 40
 
+# Model for opencode runs started from the phone (provider/model, e.g. deepseek/deepseek-v4-pro).
+# Empty = the model you last picked in opencode.
+opencode_model: ""
+
 # port: 8765
