@@ -1,0 +1,14 @@
+name: disk-usage
+description: Show free disk space and the biggest folders in a directory. Read-only, safe to run anytime.
+command: python3 scripts/disk_usage.py --path {path} --top {top}
+args:
+  path:
+    description: folder to inspect
+    default: "~"
+  top:
+    description: how many folders to list
+    default: "10"
+notify: always
+tags: [system, info]
+examples:
+  - ahub run disk-usage path=/mnt/c/Users top=5

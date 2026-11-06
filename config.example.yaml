@@ -1,0 +1,22 @@
+# ~/.config/agent-hub/config.yaml   (created by `ahub init` if missing)
+# Secrets do NOT go here: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID live in .env (ahub setup-telegram).
+
+# name -> folder. Each folder may have .hub/tasks/*.yaml  (add with: ahub init <folder>)
+projects:
+
+# How long a finished agent waits for your phone reply before stopping (minutes).
+stop_wait_minutes: 30
+
+# How long permission prompts / questions wait for you. 0 = forever (agent waits until you answer).
+request_timeout_minutes: 0
+# What to do when a request times out: deny | allow
+on_timeout: deny
+
+# Permission mode for Claude Code runs started from the phone (/claude):
+# default | acceptEdits | plan | auto | bypassPermissions
+phone_claude_mode: default
+
+# Lines shown by /log
+log_tail_lines: 40
+
+# port: 8765

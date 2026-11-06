@@ -1,0 +1,15 @@
+name: clean-tmp
+description: >
+  Delete files older than N days from a scratch folder. DESTRUCTIVE, so it asks
+  for confirmation on the phone before running.
+command: python3 scripts/clean_tmp.py --dir {dir} --days {days}
+args:
+  dir:
+    description: folder to clean
+    required: true
+  days:
+    description: delete files older than this many days
+    default: "7"
+confirm: true
+notify: always
+tags: [cleanup]

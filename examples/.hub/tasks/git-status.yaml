@@ -1,0 +1,11 @@
+name: git-status
+description: Show branch, uncommitted changes and recent commits of a git repository. Read-only.
+command: bash -c 'cd "$1" && git status -sb && echo && git log --oneline -5' _ {repo}
+args:
+  repo:
+    description: path to the repository
+    required: true
+notify: always
+tags: [git, info]
+examples:
+  - ahub run git-status repo=~/code/projects/Code_Agent/agent-hub

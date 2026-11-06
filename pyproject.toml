@@ -1,0 +1,28 @@
+[project]
+name = "agent-hub"
+version = "0.1.0"
+description = "Control your scripts and coding agents (Claude Code, opencode) from your phone via Telegram"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "httpx>=0.27",
+    "pyyaml>=6",
+    "mcp>=2.3,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+ahub = "agenthub.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["agenthub"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

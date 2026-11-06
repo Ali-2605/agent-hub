@@ -1,0 +1,12 @@
+name: long-demo
+description: >
+  Demo of a long-running script that reports progress and asks the user a
+  question on the phone halfway through. Harmless; use it to test the setup.
+command: python3 scripts/long_demo.py --steps {steps}
+args:
+  steps:
+    description: number of 1-second steps
+    default: "10"
+notify: always
+timeout: 900
+tags: [demo]
