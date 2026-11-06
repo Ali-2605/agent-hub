@@ -254,6 +254,10 @@ Best-effort (written against opencode's 2.x plugin API but not run live, because
 
 Claude's multiple-choice questions (`AskUserQuestion`) are answered through the documented hook mechanism. This is unit-tested, not tested live.
 
+**Telegram** is tested against a fake Telegram API (`tests/test_telegram.py`), not a real bot. Your first `ahub setup-telegram` is the first live run.
+
+**opencode MCP**: `ahub install opencode` registers it with opencode's own `opencode mcp add` command, which writes the 2.x format `{"mcp": {"servers": {…}}}`. The MCP server itself was tested directly (it listed tasks and ran one). opencode connecting to it was not tested.
+
 ---
 
 ## 9. Repository layout

@@ -296,26 +296,19 @@ def install_opencode(a):
     else:
         shutil.copy(src, dst)
         print(f"plugin installed: {dst}")
-    mcp_entry = {"type": "local", "command": [ahub_bin(), "mcp"], "enabled": True}
-    for name in ("opencode.json", "opencode.jsonc"):
-        cfg_path = Path.home() / ".config" / "opencode" / name
-        if cfg_path.exists():
-            break
-    else:
-        cfg_path = Path.home() / ".config" / "opencode" / "opencode.json"
-    try:
-        cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {"$schema": "https://opencode.ai/config.json"}
-    except json.JSONDecodeError:
-        print(f"\n{cfg_path} has comments, so it was not edited automatically. Add this inside it:\n")
-        print(json.dumps({"mcp": {"agent-hub": mcp_entry}}, indent=2))
+    # Register the MCP server with opencode's own command (it handles opencode.jsonc
+    # comments and the 2.x config shape: {"mcp": {"servers": {name: {...}}}}).
+    cmd = ["opencode", "mcp", "add", "--global", "agent-hub", "--", ahub_bin(), "mcp"]
+    if a.dry_run or not shutil.which("opencode"):
+        print("run: " + " ".join(cmd))
         return
-    cfg.setdefault("mcp", {})["agent-hub"] = mcp_entry
-    if a.dry_run:
-        print(json.dumps(cfg, indent=2))
-        return
-    _backup(cfg_path)
-    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
-    print(f"MCP server added to {cfg_path}")
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    out = (r.stdout + r.stderr).strip()
+    print(out or "MCP server registered with opencode")
+    if r.returncode != 0:
+        print("If it already exists that's fine. Otherwise add this to ~/.config/opencode/opencode.json(c):")
+        print(json.dumps({"mcp": {"servers": {"agent-hub": {"type": "local", "command": [ahub_bin(), "mcp"]}}}}, indent=2))
+    print("Restart opencode (and its background service) so the plugin and MCP server load.")
 
 
 def install_skill(a):
