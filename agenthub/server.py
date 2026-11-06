@@ -107,6 +107,12 @@ def create_app(hub: Hub | None = None, with_telegram: bool = True) -> FastAPI:
     async def health():
         return {"ok": True}
 
+    @app.post("/api/shutdown", dependencies=A)
+    async def shutdown():
+        if not await H().turn_off("the laptop"):
+            raise HTTPException(503, "this hub was not started with `ahub serve`")
+        return {"ok": True}
+
     @app.get("/api/status", dependencies=A)
     async def status():
         return H().status()

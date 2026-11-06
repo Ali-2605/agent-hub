@@ -39,17 +39,110 @@ def kv_args(pairs: list[str]) -> dict[str, str]:
 
 
 # --------------------------------------------------------------------- server
+def _read_password(prompt: str = "agent-hub password: ") -> str:
+    """From the keyboard, or from stdin when `ahub on` starts the server."""
+    import getpass
+    if sys.stdin is not None and sys.stdin.isatty():
+        return getpass.getpass(prompt)
+    return (sys.stdin.readline() if sys.stdin else "").rstrip("\n")
+
+
+def _require_password() -> str:
+    from .lock import check_password, has_password
+    if not has_password():
+        die("no start password set yet. Run on the laptop: ahub password")
+    pw = _read_password()
+    if not check_password(pw):
+        time.sleep(1.5)
+        die("wrong password")
+    return pw
+
+
 def cmd_serve(a: argparse.Namespace) -> None:
     import logging
 
     import uvicorn
 
-    from .config import load_config
+    from .config import hub_home, load_config
+    from .hub import Hub
     from .server import create_app
 
+    _require_password()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg = load_config()
-    uvicorn.run(create_app(), host="127.0.0.1", port=a.port or cfg.port, log_level="warning")
+    hub = Hub(cfg)
+    server = uvicorn.Server(uvicorn.Config(create_app(hub), host="127.0.0.1", port=a.port or cfg.port,
+                                           log_level="warning"))
+    hub.on_shutdown = lambda: setattr(server, "should_exit", True)
+    pid = hub_home() / "hub.pid"
+    pid.write_text(str(os.getpid()))
+    try:
+        server.run()
+    finally:
+        pid.unlink(missing_ok=True)
+
+
+def cmd_on(a: argparse.Namespace) -> None:
+    from . import client as c
+    from .config import hub_home
+    if c.is_up():
+        print("agent-hub is already on.")
+        return
+    pw = _require_password()
+    log_path = hub_home() / "hub.log"
+    with open(log_path, "ab") as log_file:
+        proc = subprocess.Popen([ahub_bin(), "serve"], stdin=subprocess.PIPE, stdout=log_file,
+                                stderr=subprocess.STDOUT, start_new_session=True)
+    proc.stdin.write((pw + "\n").encode())
+    proc.stdin.close()
+    for _ in range(40):
+        if c.is_up():
+            print("🟢 agent-hub is on. Turn it off with `ahub off` or /off on the phone.")
+            return
+        if proc.poll() is not None:
+            break
+        time.sleep(0.25)
+    tail = log_path.read_text(errors="replace").splitlines()[-15:]
+    die("the hub did not start. Last lines of " + str(log_path) + ":\n" + "\n".join(tail))
+
+
+def cmd_off(a: argparse.Namespace) -> None:
+    import signal
+
+    from . import client as c
+    from .config import hub_home
+    pid_path = hub_home() / "hub.pid"
+    if not c.is_up():
+        pid_path.unlink(missing_ok=True)
+        print("agent-hub is already off.")
+        return
+    try:
+        c.call("POST", "/api/shutdown")
+    except Exception:  # noqa: BLE001  (e.g. started some other way) -> signal it
+        if pid_path.exists():
+            os.kill(int(pid_path.read_text()), signal.SIGTERM)
+    for _ in range(40):
+        if not c.is_up():
+            print("🔴 agent-hub is off. Agents ask in the terminal again.")
+            return
+        time.sleep(0.25)
+    die("the hub is still answering; stop it manually (pkill -f 'ahub serve')")
+
+
+def cmd_password(a: argparse.Namespace) -> None:
+    import getpass
+
+    from .lock import check_password, has_password, set_password
+    if has_password() and not check_password(getpass.getpass("Current password: ")):
+        time.sleep(1.5)
+        die("wrong password")
+    new = getpass.getpass("New password: ")
+    if len(new) < 6:
+        die("use at least 6 characters")
+    if new != getpass.getpass("Repeat it: "):
+        die("passwords don't match")
+    set_password(new)
+    print("Password saved. Start the hub with: ahub on")
 
 
 def cmd_hook(a: argparse.Namespace) -> None:
@@ -324,6 +417,10 @@ def install_skill(a):
 
 
 def install_service(a):
+    from .lock import has_password
+    if has_password() and not a.dry_run:
+        die("a start password is set, so the hub only starts with `ahub on`. "
+            "An auto-start service can't type the password, so it isn't installed.")
     unit = f"""[Unit]
 Description=agent-hub (phone control for scripts and coding agents)
 After=network-online.target
@@ -350,7 +447,7 @@ WantedBy=default.target
 
 
 def cmd_install(a):
-    targets = ["claude", "opencode", "skill", "service"] if a.target == "all" else [a.target]
+    targets = ["claude", "opencode", "skill"] if a.target == "all" else [a.target]
     for t in targets:
         print(f"== {t}")
         {"claude": install_claude, "opencode": install_opencode, "skill": install_skill, "service": install_service}[t](a)
@@ -387,7 +484,7 @@ def cmd_setup_telegram(a):
     env_path.write_text("".join(f"{k}={v}\n" for k, v in env.items()))
     env_path.chmod(0o600)
     httpx.post(f"{api}/sendMessage", json={"chat_id": chat_id, "text": "✅ agent-hub is connected. Send /help."}, timeout=20)
-    print(f"Saved to {env_path}. Restart the hub: systemctl --user restart agent-hub (or rerun `ahub serve`).")
+    print(f"Saved to {env_path}. Set a start password with `ahub password`, then: ahub on (or `ahub off` and `ahub on` if it is running).")
 
 
 def cmd_doctor(a):
@@ -397,7 +494,9 @@ def cmd_doctor(a):
     ok = lambda b: "OK " if b else "!! "  # noqa: E731
     print(f"{ok(True)}hub home: {hub_home()}")
     print(f"{ok(bool(cfg.telegram_token and cfg.telegram_chat_id))}telegram configured (ahub setup-telegram)")
-    print(f"{ok(c.is_up())}hub reachable at {hub_url()} (ahub serve / ahub install service)")
+    from .lock import has_password
+    print(f"{ok(has_password())}start password set (ahub password)")
+    print(f"{ok(c.is_up())}hub on at {hub_url()} (ahub on)")
     print(f"{ok(bool(cfg.projects))}{len(cfg.projects)} project(s) in config.yaml (ahub init <folder>)")
     _, tasks, errors = _load_local_tasks()
     print(f"{ok(not errors)}{len(tasks)} task(s), {len(errors)} broken")
@@ -413,7 +512,16 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="ahub", description="agent-hub: control scripts & coding agents from your phone")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("serve", help="run the hub (API + Telegram bot)")
+    s = sub.add_parser("on", help="start the hub in the background (asks for the password)")
+    s.set_defaults(fn=cmd_on)
+
+    s = sub.add_parser("off", help="stop the hub (agents go back to asking in the terminal)")
+    s.set_defaults(fn=cmd_off)
+
+    s = sub.add_parser("password", help="set or change the start password")
+    s.set_defaults(fn=cmd_password)
+
+    s = sub.add_parser("serve", help="run the hub in the foreground (asks for the password)")
     s.add_argument("--port", type=int)
     s.set_defaults(fn=cmd_serve)
 
@@ -511,7 +619,7 @@ def main(argv: list[str] | None = None) -> None:
     except Exception as e:  # noqa: BLE001
         from .client import HubUnavailable
         if isinstance(e, HubUnavailable):
-            die(f"{e}\n  start it: ahub serve   (or: systemctl --user start agent-hub)")
+            die(f"{e}\n  turn it on: ahub on")
         raise
 
 

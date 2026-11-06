@@ -13,6 +13,7 @@ Read this before changing code. (Using the hub rather than changing it? See `ski
 - **Hook tickets.** When a hook needs the user, the Hub returns `{"pending": ticket}` and the hook polls `/api/hook/wait/<ticket>` until it gets `{"output": <hook JSON>}`. The decision logic lives in the Hub and stays in Python; the hook stays a dumb relay.
 - **Fail open.** If the hub is unreachable, hooks and the plugin print nothing and exit 0, so the agent runs normally. Never break this.
 - `policy.py` is pure (no I/O): routing (`is_routed`) and the mode table (`tool_decision`).
+- **Power.** The hub only starts after the password check (`lock.py`, `cli._require_password`), from `ahub on` or `ahub serve`. `Hub.turn_off()` (phone `/off`, `ahub off` → `POST /api/shutdown`) stops it. Never add a way to start it from the phone.
 
 ## Common changes
 

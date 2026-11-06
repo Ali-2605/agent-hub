@@ -42,12 +42,17 @@ ahub setup-telegram        # paste the token, then send any message to your bot
 
 This saves the token and *your* chat id to `~/.config/agent-hub/.env`. The bot ignores messages from anyone else.
 
-**Run the hub as a service** (starts automatically, restarts if it crashes):
+**Turn it on and off.** The hub only starts on the laptop, with a password:
 
 ```bash
-ahub install service       # systemd user service
-# logs: journalctl --user -u agent-hub -f     restart: systemctl --user restart agent-hub
+ahub password              # once: set the start password
+ahub on                    # asks for the password, starts the hub in the background
+ahub off                   # stops it (no password). From the phone: /off
 ```
+
+While the hub is off, agents work exactly as if agent-hub didn't exist, and they ask in the terminal. Messages you send the bot while it is off are ignored when it comes back on, so an old `/run` never fires later. Logs: `~/.config/agent-hub/hub.log`.
+
+The phone can turn the hub **off** but never **on**. Only someone at the laptop who knows the password can start it. (`ahub install service` exists for an always-on setup without a password; it refuses to install while a password is set.)
 
 **Connect your agents:**
 
@@ -219,7 +224,8 @@ See [config.example.yaml](config.example.yaml) for all settings (timeouts, what 
 - The bot only obeys **your** chat id. Everyone else is ignored and logged.
 - Scripts run without a shell, and arguments are passed as single values, so `/run x path="; rm -rf /"` can't inject commands.
 - There is **no "run any shell command" feature from the phone**. Only tasks you wrote can run. That's deliberate.
-- Anyone holding your unlocked phone with Telegram open can control your agents. Lock your phone.
+- Anyone holding your unlocked phone with Telegram open can control your agents. Lock your phone. Access belongs to your **Telegram account**, so it also works from Telegram Desktop/Web: turn on Two-Step Verification in Telegram.
+- **The hub only starts with your password, on the laptop** (`ahub on`). Only a salted PBKDF2 hash is stored (`~/.config/agent-hub/password`). The phone can turn it off (`/off`) but not on. The password stops accidental or automatic starts; it can't stop someone who already controls your laptop account.
 
 ---
 
@@ -227,12 +233,12 @@ See [config.example.yaml](config.example.yaml) for all settings (timeouts, what 
 
 | Problem | Fix |
 |---|---|
-| Bot doesn't answer | `ahub doctor`, then `journalctl --user -u agent-hub -f` |
+| Bot doesn't answer | Is it on? `ahub on`. Then `ahub doctor` and `~/.config/agent-hub/hub.log` |
 | No questions on the phone | Did you send `/away`? Check the session's route with `/sessions` |
 | Claude asks in the terminal anyway | You're not away, or the session's route is `local`. If the hub restarted mid-question, the hook falls back to the terminal |
 | opencode plugin does nothing | opencode runs a **background server** that loads plugins. Check `~/.local/share/opencode/log/opencode.log` for `failed to load plugin` / `failed to reload plugins`. One broken plugin (e.g. a missing file in another npm plugin's cache) can stop *all* plugins from loading |
 | Task missing from `/tasks` | `ahub tasks --check` shows YAML errors. Quote `~`, `yes`/`no` and numbers in YAML (`default: "~"`); a bare `~` means *empty* |
-| WSL: hub stops when you close the terminal | The service plus `loginctl enable-linger` keeps it running while WSL runs. WSL itself may shut down when idle: keep one terminal open, or set `vmIdleTimeout` in `%UserProfile%\.wslconfig` (check your WSL version's docs) |
+| WSL: hub stops when you close the terminal | `ahub on` detaches the hub from the terminal, but WSL itself may shut down when idle: keep one terminal open, or set `vmIdleTimeout` in `%UserProfile%\.wslconfig` (check your WSL version's docs) |
 | Windows went to sleep | Everything pauses. Set Windows power settings to not sleep while plugged in |
 
 ---
@@ -254,7 +260,7 @@ Best-effort (written against opencode's 2.x plugin API but not run live, because
 
 Claude's multiple-choice questions (`AskUserQuestion`) are answered through the documented hook mechanism. This is unit-tested, not tested live.
 
-**Telegram** is tested against a fake Telegram API (`tests/test_telegram.py`), not a real bot. Your first `ahub setup-telegram` is the first live run.
+**Telegram** was verified live: notifications, button questions and answers reaching the PC. The rest of the bot is covered by `tests/test_telegram.py` against a fake Telegram API.
 
 **opencode MCP**: `ahub install opencode` registers it with opencode's own `opencode mcp add` command, which writes the 2.x format `{"mcp": {"servers": {…}}}`. The MCP server itself was tested directly (it listed tasks and ran one). opencode connecting to it was not tested.
 

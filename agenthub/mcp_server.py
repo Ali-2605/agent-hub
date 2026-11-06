@@ -29,7 +29,7 @@ def _safe(fn):
         try:
             return fn(*a, **kw)
         except HubUnavailable as e:
-            return f"ERROR: {e}. Start it with `ahub serve` (or `systemctl --user start agent-hub`)."
+            return f"ERROR: {e}. The user turns it on with `ahub on` on the laptop; until then just work normally."
         except RuntimeError as e:
             return f"ERROR: {e}"
     return wrapper

@@ -50,6 +50,9 @@ HELP = """<b>agent-hub</b> — commands
 /find text — search tasks, logs, agent messages, history
 /reload — reload task files
 
+<b>Power</b>
+/off — turn the hub off (turn it on again on the laptop: <code>ahub on</code>)
+
 Answer questions with the buttons, or <b>reply</b> to the message with text."""
 
 
@@ -120,7 +123,8 @@ class TelegramBot:
                 ("status", "Overview"), ("pending", "Waiting for my answer"), ("sessions", "Agent sessions & modes"),
                 ("tasks", "Scripts"), ("jobs", "Recent runs"), ("away", "Route questions to phone"),
                 ("back", "Route questions to terminal"), ("find", "Search"), ("claude", "Start Claude Code"),
-                ("opencode", "Start opencode"), ("help", "All commands")]]})
+                ("opencode", "Start opencode"), ("off", "Turn the hub off"), ("help", "All commands")]]})
+        await self._skip_backlog()
         log.info("telegram bot polling")
         while True:
             try:
@@ -134,6 +138,21 @@ class TelegramBot:
             for u in updates:
                 self._offset = u["update_id"] + 1
                 asyncio.create_task(self._handle(u))
+
+    async def _skip_backlog(self) -> None:
+        """Drop messages sent while the hub was off, so an old /run or /stop
+        doesn't fire hours later when the hub is turned on."""
+        try:
+            r = await self.http.post(f"{self.api}/getUpdates", json={"offset": -1, "timeout": 0})
+            old = r.json().get("result", [])
+        except Exception as e:  # noqa: BLE001
+            log.warning("getUpdates failed: %s", e)
+            old = []
+        if old:
+            self._offset = old[-1]["update_id"] + 1
+            await self.send("🟢 agent-hub is <b>on</b>. Messages sent while it was off were ignored. /help")
+        else:
+            await self.send("🟢 agent-hub is <b>on</b>. /help")
 
     async def _handle(self, u: dict) -> None:
         try:
@@ -437,6 +456,10 @@ class TelegramBot:
         await self._agent("opencode", args)
 
     # ---- find
+    async def cmd_off(self, args: str) -> None:
+        if not await self.hub.turn_off("the phone"):
+            await self.send("This hub can't be turned off from here (not started with <code>ahub on</code>).")
+
     async def cmd_find(self, args: str) -> None:
         if not args:
             await self.send("Usage: /find text")

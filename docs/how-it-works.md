@@ -4,7 +4,7 @@
 
 | Piece | Runs where | Talks to |
 |---|---|---|
-| Hub (`ahub serve`) | systemd user service, 127.0.0.1:8765 | Telegram (outgoing long polling), SQLite, your scripts |
+| Hub (`ahub on`) | background process started with a password, 127.0.0.1:8765 | Telegram (outgoing long polling), SQLite, your scripts |
 | Claude Code hook (`ahub hook claude`) | started by Claude Code on every event | Hub REST |
 | opencode plugin (`agent-hub.js`) | inside opencode's server | Hub REST |
 | MCP server (`ahub mcp`) | started by the agent | Hub REST |

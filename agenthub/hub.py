@@ -92,6 +92,8 @@ class Hub:
         self._tickets: dict[str, asyncio.Task] = {}
         self._mode_changed = asyncio.Event()
         self._bg: list[asyncio.Task] = []
+        # Set by `ahub serve`: stops the server. None when embedded (tests).
+        self.on_shutdown: Callable[[], None] | None = None
         self.reload_tasks()
 
     # ================================================================ lifecycle
@@ -107,6 +109,17 @@ class Hub:
     async def stop(self) -> None:
         for t in self._bg:
             t.cancel()
+
+    async def turn_off(self, source: str) -> bool:
+        """Stop the hub (from `ahub off` or the phone's /off). Agents keep working
+        normally while it is off (hooks fail open). Returns False if unsupported."""
+        if self.on_shutdown is None:
+            return False
+        self.db.log_event("power", f"off ({source})")
+        await self.notifier.send(f"🔴 agent-hub is <b>off</b> (turned off from {source}).\n"
+                                 "Agents ask in the terminal again. To turn it on, run <code>ahub on</code> on the laptop.")
+        asyncio.get_running_loop().call_later(0.3, self.on_shutdown)
+        return True
 
     def reload_tasks(self) -> list[str]:
         self.tasks, self.task_errors = load_tasks(self.cfg.projects)
