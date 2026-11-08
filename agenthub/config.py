@@ -6,6 +6,7 @@ Everything the hub stores lives in one folder (the "hub home"):
         config.yaml               your settings (projects, timeouts, ...)
         .env                      secrets: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
         token                     random API token, created automatically
+        password / phone_pin      salted PBKDF2 hashes (laptop start password, phone PIN)
         hub.db                    SQLite: jobs, requests, sessions, settings
         logs/<job-id>.log         output of every job
 
@@ -21,6 +22,26 @@ from pathlib import Path
 
 def hub_home() -> Path:
     return Path(os.environ.get("AGENT_HUB_HOME", Path.home() / ".config" / "agent-hub")).expanduser()
+
+
+def ensure_home() -> Path:
+    """Create the hub home, readable only by you (it holds secrets)."""
+    home = hub_home()
+    home.mkdir(parents=True, exist_ok=True)
+    try:
+        home.chmod(0o700)
+    except OSError:
+        pass
+    return home
+
+
+def write_private(path: Path, text: str) -> None:
+    """Write a secret file that is never readable by other users, not even briefly."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.chmod(path, 0o600)  # in case the file already existed with wider permissions
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -39,11 +60,9 @@ def load_env_file(path: Path) -> dict[str, str]:
 
 def api_token() -> str:
     """Shared secret between the hub and its local clients (hooks, CLI, MCP)."""
-    path = hub_home() / "token"
+    path = ensure_home() / "token"
     if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(secrets.token_urlsafe(24))
-        path.chmod(0o600)
+        write_private(path, secrets.token_urlsafe(32))
     return path.read_text().strip()
 
 
@@ -69,6 +88,12 @@ class Config:
     phone_claude_mode: str = "default"
     log_tail_lines: int = 40
     opencode_model: str = ""
+    # Phone lock: commands that act need `/unlock <PIN>` first; the unlock lasts this long.
+    phone_unlock_minutes: int = 15
+    # Wrong PINs in a row before the hub turns itself off.
+    phone_pin_attempts: int = 5
+    # Allow bypassPermissions from the phone (/mode, /claude project:bypassPermissions). Off by default.
+    phone_allow_bypass: bool = False
 
     @property
     def db_path(self) -> Path:
@@ -82,8 +107,7 @@ class Config:
 def load_config() -> Config:
     import yaml  # only the server needs yaml; hooks never call load_config
 
-    home = hub_home()
-    home.mkdir(parents=True, exist_ok=True)
+    home = ensure_home()
     raw: dict = {}
     cfg_file = home / "config.yaml"
     if cfg_file.exists():
@@ -106,6 +130,9 @@ def load_config() -> Config:
         phone_claude_mode=str(raw.get("phone_claude_mode", "default")),
         log_tail_lines=int(raw.get("log_tail_lines", 40)),
         opencode_model=str(raw.get("opencode_model") or ""),
+        phone_unlock_minutes=max(1, int(raw.get("phone_unlock_minutes", 15))),
+        phone_pin_attempts=max(1, int(raw.get("phone_pin_attempts", 5))),
+        phone_allow_bypass=bool(raw.get("phone_allow_bypass", False)),
     )
     cfg.logs_dir.mkdir(parents=True, exist_ok=True)
     return cfg

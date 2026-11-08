@@ -145,6 +145,27 @@ def cmd_password(a: argparse.Namespace) -> None:
     print("Password saved. Start the hub with: ahub on")
 
 
+def cmd_pin(a: argparse.Namespace) -> None:
+    """The phone PIN can only be set here, on the laptop (never from the phone)."""
+    import getpass
+
+    from .lock import check_password, has_password, set_pin
+    if not has_password():
+        die("set the start password first: ahub password")
+    if not check_password(getpass.getpass("Start password: ")):
+        time.sleep(1.5)
+        die("wrong password")
+    pin = getpass.getpass("New phone PIN (at least 6 characters, different from the start password): ")
+    if len(pin) < 6:
+        die("use at least 6 characters")
+    if check_password(pin):
+        die("use a PIN that is different from the start password")
+    if pin != getpass.getpass("Repeat it: "):
+        die("PINs don't match")
+    set_pin(pin)
+    print("Phone PIN saved. Restart the hub (ahub off, ahub on), then on the phone: /unlock <PIN>")
+
+
 def cmd_hook(a: argparse.Namespace) -> None:
     if a.agent != "claude":
         die("only 'claude' uses the hook command (opencode uses the plugin)")
@@ -465,10 +486,11 @@ def cmd_install(a):
 def cmd_setup_telegram(a):
     import httpx
 
-    from .config import hub_home, load_env_file
+    from .config import hub_home, load_env_file, write_private
     env_path = hub_home() / ".env"
     env = load_env_file(env_path)
-    token = a.token or env.get("TELEGRAM_BOT_TOKEN") or input("Paste the bot token from @BotFather: ").strip()
+    import getpass
+    token = a.token or env.get("TELEGRAM_BOT_TOKEN") or getpass.getpass("Paste the bot token from @BotFather: ").strip()
     api = f"https://api.telegram.org/bot{token}"
     me = httpx.get(f"{api}/getMe", timeout=20).json()
     if not me.get("ok"):
@@ -488,11 +510,9 @@ def cmd_setup_telegram(a):
         die("no message received within 3 minutes; run this again")
     httpx.post(f"{api}/getUpdates", json={"offset": offset, "timeout": 0}, timeout=10)  # mark as read
     env.update({"TELEGRAM_BOT_TOKEN": token, "TELEGRAM_CHAT_ID": str(chat_id)})
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text("".join(f"{k}={v}\n" for k, v in env.items()))
-    env_path.chmod(0o600)
+    write_private(env_path, "".join(f"{k}={v}\n" for k, v in env.items()))
     httpx.post(f"{api}/sendMessage", json={"chat_id": chat_id, "text": "✅ agent-hub is connected. Send /help."}, timeout=20)
-    print(f"Saved to {env_path}. Set a start password with `ahub password`, then: ahub on (or `ahub off` and `ahub on` if it is running).")
+    print(f"Saved to {env_path}. Set a start password (`ahub password`) and a phone PIN (`ahub pin`), then: ahub on (or `ahub off` and `ahub on` if it is running).")
 
 
 def cmd_doctor(a):
@@ -502,6 +522,10 @@ def cmd_doctor(a):
     ok = lambda b: "OK " if b else "!! "  # noqa: E731
     print(f"{ok(True)}hub home: {hub_home()}")
     print(f"{ok(bool(cfg.telegram_token and cfg.telegram_chat_id))}telegram configured (ahub setup-telegram)")
+    from .lock import has_password, has_pin
+    print(f"{ok(has_password())}start password set (ahub password)")
+    print(f"{ok(has_pin())}phone PIN set (ahub pin) — without it the phone stays locked")
+    print(f"{ok(not cfg.phone_allow_bypass)}bypassPermissions blocked from the phone (phone_allow_bypass: false)")
     from .lock import has_password
     print(f"{ok(has_password())}start password set (ahub password)")
     print(f"{ok(c.is_up())}hub on at {hub_url()} (ahub on)")
@@ -528,6 +552,9 @@ def main(argv: list[str] | None = None) -> None:
 
     s = sub.add_parser("password", help="set or change the start password")
     s.set_defaults(fn=cmd_password)
+
+    s = sub.add_parser("pin", help="set or change the phone PIN (/unlock on the phone)")
+    s.set_defaults(fn=cmd_pin)
 
     s = sub.add_parser("serve", help="run the hub in the foreground (asks for the password)")
     s.add_argument("--port", type=int)

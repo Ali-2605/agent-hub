@@ -39,8 +39,12 @@ class Notifier(Protocol):
 
 MAX_FILE_BYTES = 50 * 1024 * 1024  # Telegram bots can send documents up to 50 MB
 
-# Never sent to the phone, whoever asks: the hub's own secrets and common key folders.
-BLOCKED_DIRS = [".ssh", ".gnupg", ".aws", ".config/agent-hub"]
+# Never sent to the phone, whoever asks: the hub's own secrets and common credential folders.
+BLOCKED_DIRS = [".ssh", ".gnupg", ".aws", ".azure", ".config/gcloud", ".config/agent-hub", ".config/gh",
+                ".docker", ".kube", ".password-store", ".local/share/keyrings"]
+BLOCKED_NAMES = {".git-credentials", ".netrc", ".pgpass", ".npmrc", ".pypirc", "credentials.json",
+                 ".credentials.json", "id_rsa", "id_ecdsa", "id_ed25519", "id_dsa"}
+BLOCKED_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".tfstate", ".kdbx")
 
 
 def check_sendable(path: str | Path) -> Path:
@@ -56,7 +60,8 @@ def check_sendable(path: str | Path) -> Path:
         root = (home / d).resolve() if not os.path.isabs(d) else Path(d).resolve()
         if p == root or root in p.parents:
             raise ValueError(f"refusing to send files from {root} (secrets)")
-    if p.name == ".env" or p.name.startswith(".env.") or p.suffix in (".pem", ".key"):
+    if (p.name == ".env" or p.name.startswith(".env.") or p.name in BLOCKED_NAMES
+            or p.name.endswith(BLOCKED_SUFFIXES) or p.name.endswith(".tfstate.backup")):
         raise ValueError(f"refusing to send {p.name} (looks like a secret)")
     size = p.stat().st_size
     if size > MAX_FILE_BYTES:

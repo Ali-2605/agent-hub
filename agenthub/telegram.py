@@ -1,17 +1,24 @@
 """Telegram bot: your phone's remote control.
 
 Talks to the Telegram Bot API directly with httpx (long polling, no webhook,
-no open ports). Only messages from TELEGRAM_CHAT_ID are accepted; everyone
-else is ignored.
+no open ports). Only private-chat messages from TELEGRAM_CHAT_ID are accepted;
+everyone else is ignored.
+
+Phone lock: the phone is locked by default. Only the read-only commands in
+OPEN_COMMANDS (plus /unlock and /off) work while locked. Everything else, including
+buttons and text replies to agents, needs `/unlock <PIN>` first (PIN set on the
+laptop with `ahub pin`). Too many wrong PINs turn the hub off.
 
 To add a command: write `async def cmd_<name>(self, args: str)` below and add
-a line to HELP. That's it — dispatch is automatic.
+a line to HELP. Dispatch is automatic, and new commands are locked unless you add
+them to OPEN_COMMANDS (only do that for read-only commands).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import shlex
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,12 +26,16 @@ import httpx
 
 from . import policy
 from .hub import Buttons, ago, esc
+from .lock import check_pin, has_pin
 
 if TYPE_CHECKING:
     from .hub import Hub
 
 log = logging.getLogger("agenthub.telegram")
 MAX_LEN = 4000
+
+# Work while the phone is locked. Read-only, plus the kill switch. Everything else is locked.
+OPEN_COMMANDS = {"start", "help", "status", "pending", "unlock", "lock", "off"}
 
 HELP = """<b>agent-hub</b> — commands
 
@@ -53,6 +64,10 @@ HELP = """<b>agent-hub</b> — commands
 /get project path — send me a file from a project folder
 /reload — reload task files
 
+<b>Security</b>
+/unlock PIN — unlock the phone for a few minutes (PIN set on the laptop: <code>ahub pin</code>)
+/lock — lock it again now
+
 <b>Power</b>
 /off — turn the hub off (turn it on again on the laptop: <code>ahub on</code>)
 
@@ -63,12 +78,37 @@ class TelegramBot:
     def __init__(self, hub: "Hub", token: str, chat_id: int):
         self.hub = hub
         self.chat_id = chat_id
+        self._token = token
         self.api = f"https://api.telegram.org/bot{token}"
         self.http = httpx.AsyncClient(timeout=70)
         self._offset = 0
+        # Phone lock state lives in memory only: a restart always starts locked.
+        self._unlocked_until = 0.0
+        self._failed_pins = 0
+        self._blocked = False  # too many wrong PINs and the hub could not turn itself off
+        self._conflict_warned = False
+
+    # ------------------------------------------------------------ phone lock
+    @property
+    def unlocked(self) -> bool:
+        return not self._blocked and time.monotonic() < self._unlocked_until
+
+    def lock(self) -> None:
+        self._unlocked_until = 0.0
+
+    def _redact(self, text: object) -> str:
+        """Never let the bot token reach a log line or a chat message."""
+        out = str(text)
+        return out.replace(self._token, "<bot-token>") if self._token else out
+
+    def _is_owner(self, chat: dict, sender: dict | None) -> bool:
+        return (chat.get("id") == self.chat_id and chat.get("type") == "private"
+                and (sender or {}).get("id") == self.chat_id)
 
     # ------------------------------------------------------------ Notifier API
     async def send(self, text: str, buttons: Buttons | None = None, reply_to: int | None = None) -> int | None:
+        if buttons and not self.unlocked:
+            text += "\n\n🔒 <i>Phone locked: /unlock PIN to answer.</i>"
         payload: dict = {"chat_id": self.chat_id, "text": self._fit(text), "parse_mode": "HTML",
                          "disable_web_page_preview": True}
         if buttons:
@@ -94,7 +134,7 @@ class TelegramBot:
                                      files={"document": (Path(path).name, data)}, timeout=300)
             res = r.json()
         except Exception as e:  # noqa: BLE001
-            log.warning("telegram sendDocument failed: %s", e)
+            log.warning("telegram sendDocument failed: %s", self._redact(e))
             return None
         if not res.get("ok"):
             log.warning("telegram sendDocument error: %s", res.get("description"))
@@ -121,7 +161,7 @@ class TelegramBot:
             r = await self.http.post(f"{self.api}/{method}", json=payload)
             data = r.json()
         except Exception as e:  # noqa: BLE001
-            log.warning("telegram %s failed: %s", method, e)
+            log.warning("telegram %s failed: %s", method, self._redact(e))
             return None
         if not data.get("ok"):
             desc = data.get("description", "")
@@ -141,16 +181,21 @@ class TelegramBot:
                 ("status", "Overview"), ("pending", "Waiting for my answer"), ("sessions", "Agent sessions & modes"),
                 ("tasks", "Scripts"), ("jobs", "Recent runs"), ("away", "Route questions to phone"),
                 ("back", "Route questions to terminal"), ("find", "Search"), ("claude", "Start Claude Code"),
-                ("opencode", "Start opencode"), ("off", "Turn the hub off"), ("help", "All commands")]]})
+                ("opencode", "Start opencode"), ("unlock", "Unlock with your PIN"), ("lock", "Lock now"),
+                ("off", "Turn the hub off"), ("help", "All commands")]]})
         await self._skip_backlog()
         log.info("telegram bot polling")
         while True:
             try:
                 r = await self.http.post(f"{self.api}/getUpdates", json={
                     "offset": self._offset, "timeout": 50, "allowed_updates": ["message", "callback_query"]})
+                if r.status_code == 409:
+                    await self._on_conflict()
+                    await asyncio.sleep(30)
+                    continue
                 updates = r.json().get("result", [])
             except Exception as e:  # noqa: BLE001
-                log.warning("getUpdates failed: %s", e)
+                log.warning("getUpdates failed: %s", self._redact(e))
                 await asyncio.sleep(5)
                 continue
             for u in updates:
@@ -164,13 +209,24 @@ class TelegramBot:
             r = await self.http.post(f"{self.api}/getUpdates", json={"offset": -1, "timeout": 0})
             old = r.json().get("result", [])
         except Exception as e:  # noqa: BLE001
-            log.warning("getUpdates failed: %s", e)
+            log.warning("getUpdates failed: %s", self._redact(e))
             old = []
         if old:
             self._offset = old[-1]["update_id"] + 1
-            await self.send("🟢 agent-hub is <b>on</b>. Messages sent while it was off were ignored. /help")
+            await self.send("🟢 agent-hub is <b>on</b> and 🔒 locked. Messages sent while it was off were ignored. "
+                            "/unlock PIN to act, /help")
         else:
-            await self.send("🟢 agent-hub is <b>on</b>. /help")
+            await self.send("🟢 agent-hub is <b>on</b> and 🔒 locked. /unlock PIN to act, /help")
+
+    async def _on_conflict(self) -> None:
+        """409 from getUpdates: another program is polling this bot, so someone else has the token."""
+        log.error("another program is polling this Telegram bot (409 Conflict): the bot token may be leaked")
+        if not self._conflict_warned:
+            self._conflict_warned = True
+            self.lock()
+            await self.send("🚨 <b>Another program is reading this bot's messages.</b> Your bot token may have leaked.\n"
+                            "Revoke it now: @BotFather → /mybots → API Token → Revoke, then run "
+                            "<code>ahub setup-telegram</code> on the laptop. The phone is locked.")
 
     async def _handle(self, u: dict) -> None:
         try:
@@ -179,13 +235,14 @@ class TelegramBot:
             elif "message" in u:
                 await self._on_message(u["message"])
         except Exception as e:  # noqa: BLE001
-            log.exception("handler error")
-            await self.send(f"⚠️ {esc(e)}")
+            log.error("handler error: %s", self._redact(e))
+            await self.send(f"⚠️ {esc(self._redact(e))}")
 
     # ------------------------------------------------------------ incoming
     async def _on_message(self, m: dict) -> None:
-        if m.get("chat", {}).get("id") != self.chat_id:
-            log.warning("ignored message from chat %s", m.get("chat", {}).get("id"))
+        if not self._is_owner(m.get("chat", {}), m.get("from")):
+            log.warning("ignored message from chat %s / user %s",
+                        m.get("chat", {}).get("id"), (m.get("from") or {}).get("id"))
             return
         text = (m.get("text") or "").strip()
         if not text:
@@ -193,11 +250,21 @@ class TelegramBot:
         if text.startswith("/"):
             cmd, _, args = text[1:].partition(" ")
             cmd = cmd.split("@")[0].lower()
+            if cmd == "unlock":
+                await self._unlock(args.strip(), m.get("message_id"))
+                return
             handler = getattr(self, f"cmd_{cmd}", None)
             if handler is None:
                 await self.send(f"Unknown command /{esc(cmd)}. Try /help")
                 return
+            if cmd not in OPEN_COMMANDS and not self.unlocked:
+                await self._refuse_locked()
+                return
             await handler(args.strip())
+            return
+        # Plain text goes to an agent as an answer or a new instruction: locked too.
+        if not self.unlocked:
+            await self._refuse_locked()
             return
         # Plain text: it's an answer. Which request? The one being replied to,
         # or the only pending one that accepts text.
@@ -220,9 +287,15 @@ class TelegramBot:
             await self.send(f"{len(pending)} questions are waiting — <b>reply</b> to the one you mean. /pending")
 
     async def _on_button(self, q: dict) -> None:
-        await self._call("answerCallbackQuery", {"callback_query_id": q["id"]})
-        if q.get("message", {}).get("chat", {}).get("id") != self.chat_id:
+        if not self._is_owner(q.get("message", {}).get("chat", {}), q.get("from")):
+            await self._call("answerCallbackQuery", {"callback_query_id": q["id"]})
+            log.warning("ignored button from user %s", (q.get("from") or {}).get("id"))
             return
+        if not self.unlocked:
+            await self._call("answerCallbackQuery", {"callback_query_id": q["id"], "show_alert": True,
+                                                     "text": "🔒 Locked. Send /unlock PIN first."})
+            return
+        await self._call("answerCallbackQuery", {"callback_query_id": q["id"]})
         kind, _, rest = q.get("data", "").partition(":")
         if kind == "a":  # answer a request: a:<request_id>:<option index>
             rid, _, idx = rest.partition(":")
@@ -244,6 +317,55 @@ class TelegramBot:
             await self._session_card(rest)
         elif kind == "away":
             await (self.cmd_away("") if rest == "1" else self.cmd_back(""))
+
+    async def _refuse_locked(self) -> None:
+        if self._blocked:
+            await self.send("🔒 Locked after too many wrong PINs. Restart the hub on the laptop (<code>ahub off</code>, "
+                            "<code>ahub on</code>).")
+        else:
+            await self.send("🔒 The phone is locked. Send <code>/unlock PIN</code> (set it on the laptop with "
+                            "<code>ahub pin</code>).")
+
+    async def _unlock(self, pin: str, message_id: int | None) -> None:
+        # Remove the PIN from the chat history straight away (works for incoming messages in private chats).
+        if message_id and pin:
+            if await self._call("deleteMessage", {"chat_id": self.chat_id, "message_id": message_id}) is None:
+                await self.send("⚠️ I couldn't delete your PIN message. Delete it yourself.")
+        if self._blocked:
+            await self._refuse_locked()
+            return
+        if not has_pin():
+            await self.send("No phone PIN is set, so the phone stays locked. On the laptop run <code>ahub pin</code>.")
+            return
+        if not pin:
+            await self.send("Usage: <code>/unlock PIN</code>")
+            return
+        if await asyncio.to_thread(check_pin, pin):
+            self._failed_pins = 0
+            minutes = self.hub.cfg.phone_unlock_minutes
+            self._unlocked_until = time.monotonic() + minutes * 60
+            self.hub.db.log_event("security", "phone unlocked")
+            await self.send(f"🔓 Unlocked for {minutes} min. /lock to lock now.")
+            return
+        self._failed_pins += 1
+        self.hub.db.log_event("security", f"wrong phone PIN ({self._failed_pins})")
+        left = self.hub.cfg.phone_pin_attempts - self._failed_pins
+        if left > 0:
+            await asyncio.sleep(1.5)
+            await self.send(f"❌ Wrong PIN. {left} attempt(s) left before the hub turns itself off.")
+            return
+        self.lock()
+        await self.send("🚨 Too many wrong PINs. Turning the hub off. If this wasn't you, secure your Telegram "
+                        "account and revoke the bot token in @BotFather.")
+        if not await self.hub.turn_off("the phone (too many wrong PINs)"):
+            self._blocked = True
+
+    async def cmd_lock(self, args: str) -> None:
+        self.lock()
+        await self.send("🔒 Locked.")
+
+    def _bypass_refused(self, mode: str | None) -> bool:
+        return mode == "bypassPermissions" and not self.hub.cfg.phone_allow_bypass
 
     # ------------------------------------------------------------ commands
     async def cmd_start(self, args: str) -> None:
@@ -409,7 +531,8 @@ class TelegramBot:
         text = self._session_line(s) + (f"\n<pre>{esc(last[-1200:])}</pre>" if last else "")
         short = s["id"][:12]
         rows = [[(f"{policy.MODE_EMOJI[m]} {m}", f"m:{short}:{m}") for m in ("default", "acceptEdits", "plan")],
-                [(f"{policy.MODE_EMOJI[m]} {m}", f"m:{short}:{m}") for m in ("auto", "bypassPermissions", "pause")],
+                [(f"{policy.MODE_EMOJI[m]} {m}", f"m:{short}:{m}") for m in ("auto", "bypassPermissions", "pause")
+                 if not self._bypass_refused(m)],
                 [("↩️ clear (agent decides)", f"m:{short}:clear")],
                 [("💬 Message this session", f"msg:{short}")]]
         await self.send(text, rows)
@@ -424,6 +547,10 @@ class TelegramBot:
             await self.send(f"Usage: /mode session-id mode\n\n{modes}\n• <b>clear</b> — stop overriding")
             return
         try:
+            if self._bypass_refused(parts[1]):
+                await self.send("⛔ bypassPermissions can't be set from the phone. "
+                                "(Allow it with <code>phone_allow_bypass: true</code> in config.yaml.)")
+                return
             s = self.hub.set_session_mode(parts[0], parts[1])
         except ValueError as e:
             await self.send(f"⚠️ {esc(e)}")
@@ -465,6 +592,15 @@ class TelegramBot:
                             f"Optional mode: /{agent} project:plan prompt   (projects: /projects)")
             return
         project, _, mode = project.partition(":")
+        if project not in self.hub.cfg.projects:
+            await self.send(f"⚠️ Unknown project '{esc(project)}'. From the phone, agents only start in your "
+                            "registered projects (/projects).")
+            return
+        effective = mode or (self.hub.cfg.phone_claude_mode if agent == "claude" else None)
+        if self._bypass_refused(effective):
+            await self.send("⛔ bypassPermissions can't be used from the phone. "
+                            "(Allow it with <code>phone_allow_bypass: true</code> in config.yaml.)")
+            return
         try:
             await self.hub.run_agent(agent, project, prompt.strip(), mode or None)
         except ValueError as e:

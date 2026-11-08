@@ -88,12 +88,12 @@ def test_phone_off(tmp_path, monkeypatch):
     stopped = []
 
     async def go():
-        await bot._on_message({"chat": {"id": 42}, "text": "/off"})   # not started by `ahub serve`
+        await bot._on_message({"chat": {"id": 42, "type": "private"}, "from": {"id": 42}, "text": "/off"})   # not started by `ahub serve`
         hub.on_shutdown = lambda: stopped.append(True)
-        await bot._on_message({"chat": {"id": 7}, "text": "/off"})    # stranger: ignored
+        await bot._on_message({"chat": {"id": 7, "type": "private"}, "from": {"id": 7}, "text": "/off"})    # stranger: ignored
         await asyncio.sleep(0.4)
         assert not stopped
-        await bot._on_message({"chat": {"id": 42}, "text": "/off"})
+        await bot._on_message({"chat": {"id": 42, "type": "private"}, "from": {"id": 42}, "text": "/off"})
         await asyncio.sleep(0.4)
 
     asyncio.run(go())

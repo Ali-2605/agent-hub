@@ -46,13 +46,16 @@ This saves the token and *your* chat id to `~/.config/agent-hub/.env`. The bot i
 
 ```bash
 ahub password              # once: set the start password
+ahub pin                   # once: set the phone PIN (different from the password)
 ahub on                    # asks for the password, starts the hub in the background
 ahub off                   # stops it (no password). From the phone: /off
 ```
 
 While the hub is off, agents work exactly as if agent-hub didn't exist, and they ask in the terminal. Messages you send the bot while it is off are ignored when it comes back on, so an old `/run` never fires later. Logs: `~/.config/agent-hub/hub.log`.
 
-The phone can turn the hub **off** but never **on**. Only someone at the laptop who knows the password can start it. (`ahub install service` exists for an always-on setup without a password; it refuses to install while a password is set.)
+The phone can turn the hub **off** but never **on**. Only someone at the laptop who knows the password can start it.
+
+**The phone starts locked.** While locked it can only read (`/status`, `/pending`, `/help`) and turn the hub off. To act (run scripts, start or message agents, answer prompts, fetch files), send `/unlock <PIN>`: the bot deletes your message and unlocks for 15 minutes (`phone_unlock_minutes`). `/lock` locks it again. Five wrong PINs in a row turn the hub off. (`ahub install service` exists for an always-on setup without a password; it refuses to install while a password is set.)
 
 **Connect your agents:**
 
@@ -236,12 +239,16 @@ See [config.example.yaml](config.example.yaml) for all settings (timeouts, what 
 
 - The hub listens on **127.0.0.1 only**, and every request needs the token in `~/.config/agent-hub/token`.
 - Telegram uses outgoing long polling, so there are **no open ports** and no webhooks.
-- The bot only obeys **your** chat id. Everyone else is ignored and logged.
+- The bot only obeys **your** private chat: the chat id *and* the sender must be you, and group chats are ignored. Everyone else is ignored and logged.
+- **Phone lock.** The phone starts locked after every restart, and only read-only commands and `/off` work until you send `/unlock <PIN>`. That covers commands, buttons and text replies to agents. The PIN is set only on the laptop (`ahub pin`), stored as a salted PBKDF2 hash, deleted from the chat right after you send it, and never logged. The unlock expires after `phone_unlock_minutes` (15). After `phone_pin_attempts` (5) wrong PINs, the hub turns itself off.
+- **No `bypassPermissions` from the phone** unless you set `phone_allow_bypass: true`. From the phone, agents only start inside your registered projects.
+- **Leaked-token alarm.** If another program starts polling your bot (Telegram answers `409 Conflict`), the hub locks the phone and tells you to revoke the token in @BotFather. The token is redacted from logs and error messages.
 - Scripts run without a shell, and arguments are passed as single values, so `/run x path="; rm -rf /"` can't inject commands.
 - There is **no "run any shell command" feature from the phone**. Only tasks you wrote can run. That's deliberate.
 - Anyone holding your unlocked phone with Telegram open can control your agents. Lock your phone. Access belongs to your **Telegram account**, so it also works from Telegram Desktop/Web: turn on Two-Step Verification in Telegram.
-- **Sending files** (`ahub send`, `send_file`, `/get`) refuses the hub's own folder, `~/.ssh`, `~/.gnupg`, `~/.aws`, `.env*`, `*.pem` and `*.key`, and anything over Telegram's 50 MB bot limit. `/get` from the phone only reaches files inside registered projects or folders where an agent session ran, never your whole disk. Files pass through Telegram's servers, so think twice about sensitive data.
+- **Sending files** (`ahub send`, `send_file`, `/get`) refuses the hub's own folder, credential folders (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config/gh`, `~/.docker`, `~/.kube`, …), `.env*`, private keys, `.git-credentials`, `.netrc`, `*.pem`, `*.key`, `*.tfstate`, and anything over Telegram's 50 MB bot limit. `/get` from the phone only reaches files inside registered projects or folders where an agent session ran, never your whole disk. Files pass through Telegram's servers, so think twice about sensitive data.
 - **The hub only starts with your password, on the laptop** (`ahub on`). Only a salted PBKDF2 hash is stored (`~/.config/agent-hub/password`). The phone can turn it off (`/off`) but not on. The password stops accidental or automatic starts; it can't stop someone who already controls your laptop account.
+- Secret files (`token`, `.env`, `password`, `phone_pin`) are created with mode 600 and the hub folder with mode 700. See [SECURITY.md](SECURITY.md) for the threat model and how to report a problem.
 
 ---
 

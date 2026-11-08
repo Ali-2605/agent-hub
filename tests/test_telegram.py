@@ -7,6 +7,8 @@ import pytest
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 CHAT = 42
+PIN = "s3cret-pin"
+OWNER_CHAT = {"id": CHAT, "type": "private"}
 
 
 @pytest.fixture
@@ -17,9 +19,14 @@ def bot(tmp_path, monkeypatch):
     from agenthub.hub import Hub
     from agenthub.telegram import TelegramBot
 
+    from agenthub import lock
+    monkeypatch.setattr(lock, "ITERATIONS", 1000)  # fast hashing in tests
+    lock.set_pin(PIN)
+
     hub = Hub(load_config())
     b = TelegramBot(hub, "TOKEN", CHAT)
     b.calls = []
+    b._unlocked_until = float("inf")  # most tests act as an unlocked owner; lock tests call b.lock()
 
     async def fake_call(method, payload):
         b.calls.append((method, payload))
@@ -31,7 +38,7 @@ def bot(tmp_path, monkeypatch):
 
 
 def msg(text, reply_to=None):
-    m = {"chat": {"id": CHAT}, "text": text}
+    m = {"message_id": 500, "chat": OWNER_CHAT, "from": {"id": CHAT}, "text": text}
     if reply_to:
         m["reply_to_message"] = {"message_id": reply_to}
     return {"update_id": 1, "message": m}
@@ -56,7 +63,7 @@ def test_commands_render(bot):
 
 
 def test_strangers_are_ignored(bot):
-    run(bot._handle({"update_id": 1, "message": {"chat": {"id": 999}, "text": "/status"}}))
+    run(bot._handle({"update_id": 1, "message": {"chat": {"id": 999, "type": "private"}, "from": {"id": 999}, "text": "/status"}}))
     assert bot.calls == []
 
 
@@ -65,7 +72,7 @@ def test_button_and_reply_answer_requests(bot):
         hub = bot.hub
         r1 = await hub.create_request(kind="question", title="Pick", options=["A", "B"])
         await bot._handle({"update_id": 2, "callback_query": {"id": "x", "data": f"a:{r1['id']}:1",
-                                                               "message": {"chat": {"id": CHAT}}}})
+                                                               "message": {"chat": OWNER_CHAT}, "from": {"id": CHAT}}})
         assert hub.db.get("requests", r1["id"])["answer"] == "B"
         r2 = await hub.create_request(kind="question", title="Name?", allow_text=True)
         await bot._handle(msg("Ali", reply_to=hub.db.get("requests", r2["id"])["tg_message_id"]))
@@ -84,7 +91,7 @@ def test_away_toggle_and_mode(bot):
         assert hub.away
         hub.upsert_session("abc123456789", "claude", cwd="/x/proj", agent_mode="default")
         await bot._handle({"update_id": 3, "callback_query": {"id": "x", "data": "m:abc123456789:plan",
-                                                               "message": {"chat": {"id": CHAT}}}})
+                                                               "message": {"chat": OWNER_CHAT}, "from": {"id": CHAT}}})
         assert hub.db.get("sessions", "abc123456789")["override_mode"] == "plan"
         await bot._handle(msg("/back"))
         assert not hub.away
@@ -104,7 +111,7 @@ def test_message_session_button(bot, tmp_path):
 
     async def go():
         await bot._handle({"update_id": 3, "callback_query": {"id": "x", "data": "msg:abc123",
-                                                               "message": {"chat": {"id": CHAT}}}})
+                                                               "message": {"chat": OWNER_CHAT}, "from": {"id": CHAT}}})
         req = hub.pending_requests()[0]
         assert req["session_id"] == "abc123-claude" and req["allow_text"]
         await bot._handle(msg("write the report", reply_to=req["tg_message_id"]))

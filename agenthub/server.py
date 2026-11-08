@@ -6,6 +6,8 @@ Interactive docs while the hub runs: http://127.0.0.1:8765/docs
 """
 from __future__ import annotations
 
+import hmac
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -101,7 +103,7 @@ def create_app(hub: Hub | None = None, with_telegram: bool = True) -> FastAPI:
     token = api_token()
 
     def auth(x_hub_token: str = Header(default="")) -> None:
-        if x_hub_token != token:
+        if not hmac.compare_digest(x_hub_token.encode(), token.encode()):
             raise HTTPException(401, "bad or missing X-Hub-Token")
 
     def H() -> Hub:

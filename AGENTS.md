@@ -13,13 +13,14 @@ Read this before changing code. (Using the hub rather than changing it? See `ski
 - **Hook tickets.** When a hook needs the user, the Hub returns `{"pending": ticket}` and the hook polls `/api/hook/wait/<ticket>` until it gets `{"output": <hook JSON>}`. The decision logic lives in the Hub and stays in Python; the hook stays a dumb relay.
 - **Fail open.** If the hub is unreachable, hooks and the plugin print nothing and exit 0, so the agent runs normally. Never break this.
 - `policy.py` is pure (no I/O): routing (`is_routed`) and the mode table (`tool_decision`).
+- **Phone lock.** The phone starts locked. `TelegramBot._on_message` / `_on_button` refuse anything not in `OPEN_COMMANDS` until `/unlock <PIN>` (`lock.check_pin`). New `cmd_*` methods are locked automatically. Add one to `OPEN_COMMANDS` only if it is read-only. Never add a way to set the PIN or allow bypass from the phone, and never log the PIN or the bot token (use `_redact`).
 - **Power.** The hub only starts after the password check (`lock.py`, `cli._require_password`), from `ahub on` or `ahub serve`. `Hub.turn_off()` (phone `/off`, `ahub off` → `POST /api/shutdown`) stops it. Never add a way to start it from the phone.
 
 ## Common changes
 
 | I want to… | Do this |
 |---|---|
-| Add a phone command | `async def cmd_<name>(self, args)` in `telegram.py` + a line in `HELP`. Dispatch is automatic |
+| Add a phone command | `async def cmd_<name>(self, args)` in `telegram.py` + a line in `HELP`. Dispatch is automatic, and it is locked until `/unlock` |
 | Add a button | Add a `(label, "prefix:data")` tuple and handle `prefix` in `TelegramBot._on_button`. callback_data ≤ 64 bytes |
 | Change what goes to the phone | `policy.py` (+ `tests/test_policy.py`) |
 | React to a new Claude hook event | `Hub.handle_claude_hook`; register the event in `cli.claude_hooks_config` |

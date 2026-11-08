@@ -23,4 +23,10 @@ log_tail_lines: 40
 # Empty = the model you last picked in opencode.
 opencode_model: ""
 
+# Phone lock: how long `/unlock <PIN>` lasts, and how many wrong PINs turn the hub off.
+phone_unlock_minutes: 15
+phone_pin_attempts: 5
+# Allow bypassPermissions from the phone. Keep false unless you really need it.
+phone_allow_bypass: false
+
 # port: 8765
